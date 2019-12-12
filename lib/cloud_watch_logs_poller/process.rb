@@ -4,6 +4,7 @@ module CloudWatchLogsPoller
       @client = Aws::CloudWatchLogs::Client.new
       @interval = interval
       @debug = debug
+      @event_ids = []
     end
 
     def execute(log_group_name:, log_stream_name_prefix: nil, filter_pattern: nil, start_time: Time.now, &block)
@@ -19,6 +20,9 @@ module CloudWatchLogsPoller
         loop do
           result = @client.filter_log_events(params)
           result.events.each do |event|
+            next if @event_ids.include?(event.event_id)
+
+            @event_ids << event.event_id
             block.call(Event.convert_from_filtered_log_event(event))
           end
 
