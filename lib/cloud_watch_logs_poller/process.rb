@@ -4,7 +4,8 @@ module CloudWatchLogsPoller
       @client = Aws::CloudWatchLogs::Client.new
       @interval = interval
       @debug = debug
-      @event_ids_by_timestamp = {}
+      @event_ids = Set.new
+      @max_timestamp = 0
     end
 
     def execute(log_group_name:, log_stream_name_prefix: nil, filter_pattern: nil, start_time: Time.now, &block)
@@ -24,28 +25,26 @@ module CloudWatchLogsPoller
           result.events.each do |event|
             timestamp = event.timestamp&.to_i
             event_id = event.event_id
+            @max_timestamp = timestamp if timestamp > @max_timestamp
 
             debug_log("timestamp = #{timestamp}")
 
-            @event_ids_by_timestamp[timestamp] ||= Set.new
-            next if @event_ids_by_timestamp[timestamp].include?(event_id)
+            next if @event_ids.include?(event_id)
 
-            @event_ids_by_timestamp[timestamp] << event_id
+            @event_ids << event_id
             block.call(Event.convert_from_filtered_log_event(event))
           end
 
           debug_log(params)
 
-          @event_ids_by_timestamp = get_latest_events_and_timestamp
           break unless result.next_token
 
           params[:next_token] = result.next_token
         end
 
-        newest_timestamp = @event_ids_by_timestamp.keys.max
-        params[:start_time] = newest_timestamp unless newest_timestamp.nil?
+        params[:start_time] = @max_timestamp + 1 if @max_timestamp > 0
         params[:next_token] = nil
-        @event_ids_by_timestamp = {}
+        @event_ids = Set.new
 
         sleep(@interval)
       end
@@ -54,13 +53,6 @@ module CloudWatchLogsPoller
     end
 
     private
-
-    def get_latest_events_and_timestamp
-      newest_timestamp = @event_ids_by_timestamp.keys.max
-      return {} if newest_timestamp.nil?
-
-      {newest_timestamp => @event_ids_by_timestamp[newest_timestamp]}
-    end
 
     def debug_log(message)
       return unless @debug
